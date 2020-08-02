@@ -40,12 +40,30 @@ $ go build .
 
 There should be a resulting `gochopchop` binary in the folder.
 
+### Using Docker
+
+```bash
+docker build -t gochopchop .
+```
+
 ## Usage
 
 We are continuously trying to make `goChopChop` as easy as possible. Scanning a host with this utility is as simple as : 
 
 ```bash
 $ ./gochopchop scan --url https://foobar.com
+```
+
+### Using Docker
+
+```bash
+docker run chopchop scan --url https://foobar.com
+```
+
+#### Custom configuration file
+
+```bash
+docker run -v ./:/app chopchop scan -c /app/chopchop.yml --url https://foobar.com
 ```
 
 ## What's next
@@ -152,6 +170,7 @@ Each check needs those fields:
 | headers | List of string | List of headers there should be in the HTTP response | Yes | N/A |
 | match | List of string| List the strings there should be in the HTTP response  | Yes |  "[branch" |
 | no_match | List of string | List the strings there should NOT be in the HTTP response | Yes | N/A |
+| query_string | GET parameters that have to be passed to the endpoint | String | Yes | `query_string: "id=FOO-chopchoptest"` |
 
 ## External Libraries
 
