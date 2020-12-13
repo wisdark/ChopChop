@@ -8,12 +8,20 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v2"
 )
+
+// Verbose Verbose function
+func Verbose(message string, verbose bool) {
+	if verbose {
+		fmt.Println("[verbose] " + message)
+	}
+}
 
 // Scan of domain via url
 func Scan(cmd *cobra.Command, args []string) {
@@ -23,14 +31,24 @@ func Scan(cmd *cobra.Command, args []string) {
 	insecure, _ := cmd.Flags().GetBool("insecure")
 	csv, _ := cmd.Flags().GetBool("csv")
 	json, _ := cmd.Flags().GetBool("json")
+	csvFile, _ := cmd.Flags().GetString("csv-file")
+	jsonFile, _ := cmd.Flags().GetString("json-file")
+	signatureName, _ := cmd.Flags().GetString("signature-name")
+	severity, _ := cmd.Flags().GetString("severity")
 	urlFile, _ := cmd.Flags().GetString("url-file")
 	configFile, _ := cmd.Flags().GetString("config-file")
 	suffix, _ := cmd.Flags().GetString("suffix")
 	prefix, _ := cmd.Flags().GetString("prefix")
+	httpRequestTimeout, _ := cmd.Flags().GetInt("timeout")
 	blockedFlag, _ := cmd.Flags().GetString("block")
+	verbose, _ := cmd.Flags().GetBool("verbose")
 
 	var tmpURL string
 	var urlList []string
+
+	if url == "" && urlFile == "" {
+		log.Fatal("`url` or either `url-file` have been specified! Use `scan -help` for usage")
+	}
 
 	cfg, err := os.Open(configFile)
 	if err != nil {
@@ -66,7 +84,7 @@ func Scan(cmd *cobra.Command, args []string) {
 	}
 	// If flag insecure isn't specified, check yaml file if it's specified in it
 	if insecure {
-		fmt.Println("Launching scan without validating the SSL certificate")
+		Verbose("Launching scan without validating the SSL certificate", verbose)
 	} else {
 		insecure = y.Insecure
 	}
@@ -74,63 +92,106 @@ func Scan(cmd *cobra.Command, args []string) {
 	CheckStructFields(y)
 	hit := false
 	block := false
-	currentTime := time.Now()
-	date := currentTime.Format("2006-01-02_15-04-05")
 	out := []data.Output{}
 
-	for i := 0; i < len(urlList); i++ {
-		fmt.Print("Testing domain : ")
-		fmt.Println(prefix + urlList[i] + suffix)
-		for index, plugin := range y.Plugins {
-			_ = index
-			tmpURL = prefix + urlList[i] + suffix + fmt.Sprint(plugin.URI)
-			if plugin.QueryString != "" {
-				tmpURL += "?" + plugin.QueryString
-			}
-			httpResponse, err := pkg.HTTPGet(insecure, tmpURL)
-			if err != nil {
-				_ = errors.Wrap(err, "Timeout of HTTP Request")
-			}
+	var wg sync.WaitGroup
+	wg.Add(len(urlList))
 
-			if httpResponse != nil {
-				for index, check := range plugin.Checks {
-					_ = index
-					answer := pkg.ResponseAnalysis(httpResponse, check)
-					if answer {
-						hit = true
-						if BlockCI(blockedFlag, *check.Severity) {
-							block = true
+	tags := strings.Split(signatureName, ",")
+
+	for i := 0; i < len(urlList); i++ {
+		go func(domain string) {
+			defer wg.Done()
+			Verbose("Testing domain : "+prefix+domain+suffix, verbose)
+			for _, plugin := range y.Plugins {
+
+				var uris []string
+				// check the present of `uri` and `uris` which has to be forbidden
+				if len(plugin.ListOfURI) > 0 && plugin.URI != "" {
+					log.Fatal("You can't both have `uri` and `uris` specified for URI: " + plugin.URI)
+				}
+
+				if plugin.URI != "" {
+					uris = make([]string, 1)
+					uris[0] = plugin.URI
+				} else {
+					uris = plugin.ListOfURI
+				}
+
+				for j := 0; j < len(uris); j++ {
+					canExecutePluginByName := isPluginAuthorized(plugin, tags)
+					if !canExecutePluginByName {
+						Verbose("Skipping signature rule with URI: "+uris[j], verbose)
+					}
+
+					canExecutePluginBySeverity := isPluginAuthorizedBySeverity(plugin, severity)
+					if !canExecutePluginBySeverity {
+						Verbose("Skipping signature rule with URI: "+uris[j], verbose)
+					}
+
+					if canExecutePluginByName && canExecutePluginBySeverity {
+						tmpURL = prefix + domain + suffix + fmt.Sprint(uris[j])
+						if plugin.QueryString != "" {
+							tmpURL += "?" + plugin.QueryString
 						}
-						out = append(out, data.Output{
-							Domain:      urlList[i],
-							PluginName:  check.PluginName,
-							TestedURL:   plugin.URI,
-							Severity:    string(*check.Severity),
-							Remediation: *check.Remediation,
-						})
+
+						// By default we follow HTTP redirects
+						followRedirects := true
+						// But for each plugin we can override and don't follow HTTP redirects
+						if plugin.FollowRedirects != nil && *plugin.FollowRedirects == false {
+							followRedirects = false
+						}
+
+						Verbose("Testing URL: "+tmpURL, verbose)
+						httpResponse, err := pkg.HTTPGet(insecure, tmpURL, followRedirects, httpRequestTimeout)
+						if err != nil {
+							fmt.Println(err)
+						}
+
+						if httpResponse != nil {
+							for _, check := range plugin.Checks {
+								if severity != "" && check.Severity.String() != severity {
+									continue // break if the severity is defined and different from the one we specified
+								}
+								answer := pkg.ResponseAnalysis(httpResponse, check)
+								if answer {
+									Verbose("[!] Hit found!\n\tURL: "+tmpURL+"\n\tPlugin: "+check.PluginName+"\n\tSeverity: "+string(*check.Severity), verbose)
+									hit = true
+									if BlockCI(blockedFlag, *check.Severity) {
+										block = true
+									}
+									out = append(out, data.Output{
+										Domain:      domain,
+										PluginName:  check.PluginName,
+										TestedURL:   uris[j],
+										Severity:    string(*check.Severity),
+										Remediation: *check.Remediation,
+									})
+								}
+							}
+							_ = httpResponse.Body.Close()
+						}
 					}
 				}
-			} else {
-				fmt.Println("Server refused the connection for URL : " + tmpURL)
-				continue
 			}
-			_ = httpResponse.Body.Close()
-		}
+		}(urlList[i])
 	}
+
+	wg.Wait()
 
 	if hit {
 		pkg.FormatOutputTable(out)
 		if json {
 			outputJSON := pkg.AddVulnToOutputJSON(out)
-			pkg.CreateFileJSON(date, outputJSON)
+			pkg.WriteJSONOutput(jsonFile, outputJSON)
 		}
 		if csv {
-			pkg.FormatOutputCSV(date, out)
+			pkg.WriteCSVOutput(csvFile, out)
 		}
 	}
 
 	elapsed := time.Since(start)
-	log.Printf("Scan execution time: %s", elapsed)
+	Verbose(fmt.Sprintf("Scan execution time: %s", elapsed), verbose)
 
 	// return EXIT_SUCCESS if
 	// 1. no hit
@@ -141,7 +202,44 @@ func Scan(cmd *cobra.Command, args []string) {
 		} else {
 			os.Exit(1)
 		}
+	} else {
+		fmt.Println("No vulnerabilities found.")
 	}
+}
+
+// isPluginAuthorizedBySeverity returns `true` if there's at least one check with the same severity
+func isPluginAuthorizedBySeverity(signature data.Signature, severity string) bool {
+	// if the flag is not properly set by the user, return true and execute them all
+	if severity == "" {
+		return true
+	}
+	for _, check := range signature.Checks {
+		if check.Severity.String() == severity {
+			return true
+		}
+	}
+	return false
+}
+
+// isPluginAuthorized returns `true` if there's at least one tag in a check name
+func isPluginAuthorized(signature data.Signature, tags []string) bool {
+	// if the flag is not properly set by the user, return true and execute them all
+	if tags[0] == "" {
+		return true
+	}
+	for j := 0; j < len(tags); j++ {
+		for _, check := range signature.Checks {
+			// fmt.Println(check.PluginName)
+			// fmt.Println(tags[j])
+
+			// if there's one tag in one of the `checks`, we do the request
+			// otherwise, we don't
+			if strings.Contains(check.PluginName, tags[j]) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // BlockCI function will allow the user to return a different status code depending on the highest severity that has triggered

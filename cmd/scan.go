@@ -12,15 +12,21 @@ import (
 
 func init() {
 	rootCmd.AddCommand(scanCmd)
-	scanCmd.Flags().StringP("url", "u", "", "url to scan")                                                  // --url OU -u
-	scanCmd.Flags().StringP("config-file", "c", "chopchop.yml", "path to config/data file")                 // --config-file ou -c
-	scanCmd.Flags().BoolP("insecure", "i", false, "Check SSL certificate")                                  // --insecure ou -n
-	scanCmd.Flags().StringP("url-file", "f", "", "path to a specified file containing urls to test")        // --uri-file ou -f
-	scanCmd.Flags().StringP("suffix", "s", "", "Add suffix to urls when flag url-file is specified")        // --suffix ou -s
-	scanCmd.Flags().StringP("prefix", "p", "", "Add prefix to urls when flag url-file is specified")        // --prefix ou -p
-	scanCmd.Flags().StringP("block", "b", "", "Block pipeline if severity is over or equal specified flag") // --block ou -b
-	scanCmd.Flags().BoolP("csv", "", false, "output as a csv file")                                         //--csv
-	scanCmd.Flags().BoolP("json", "", false, "output as a json file")                                       //--json
+	scanCmd.Flags().StringP("url", "u", "", "url to scan")                                                                                                     // --url OU -u
+	scanCmd.Flags().StringP("config-file", "c", "chopchop.yml", "path to config/data file")                                                                    // --config-file ou -c
+	scanCmd.Flags().BoolP("insecure", "i", false, "Check SSL certificate")                                                                                     // --insecure ou -n
+	scanCmd.Flags().StringP("url-file", "f", "", "path to a specified file containing urls to test")                                                           // --uri-file ou -f
+	scanCmd.Flags().StringP("suffix", "s", "", "Add suffix to urls when flag url-file is specified")                                                           // --suffix ou -s
+	scanCmd.Flags().StringP("prefix", "p", "", "Add prefix to urls when flag url-file is specified")                                                           // --prefix ou -p
+	scanCmd.Flags().Int32P("timeout", "t", 10, "Timeout for the HTTP requests (default: 10s)")                                                                 // --timeout ou -t
+	scanCmd.Flags().StringP("block", "b", "", "Block pipeline if severity is over or equal specified flag")                                                    // --block ou -b
+	scanCmd.Flags().StringP("signature-name", "", "", "Filter by signature names (engine will check if words are contained), can use comma for multiple ones") // --signature-name
+	scanCmd.Flags().StringP("severity", "", "", "Filter by severity (engine will check for same severity checks)")                                             // --severity
+	scanCmd.Flags().BoolP("csv", "", false, "output as a csv file")                                                                                            //--csv
+	scanCmd.Flags().BoolP("json", "", false, "output as a json file")                                                                                          //--json
+	scanCmd.Flags().StringP("csv-file", "", "results.csv", "output as a csv file (Default: results.csv)")                                                      //--csv mydomain.csv
+	scanCmd.Flags().StringP("json-file", "", "results.json", "output as a json file (Default: results.json)")                                                  //--json mydomain.json
+	scanCmd.Flags().BoolP("verbose", "v", false, "Verbose mode")                                                                                               //--verbose ou -v
 }
 
 var scanCmd = &cobra.Command{
@@ -56,12 +62,12 @@ func scanCheckArgsAndFlags(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid value for block: %v", err)
 	}
-	if url != "" {
-		if !strings.HasPrefix(url, "http") {
-			// If http or https not specified, return fatal log
-			return fmt.Errorf("URL needs a specified prefix :  http:// or https://")
-		}
-	}
+	// if url != "" {
+	// 	if !strings.HasPrefix(url, "http") {
+	// 		// If http or https not specified, return fatal log
+	// 		return fmt.Errorf("URL needs a specified prefix :  http:// or https://")
+	// 	}
+	// }
 	if suffix != "" || prefix != "" {
 		if urlFile == "" {
 			return fmt.Errorf("suffix or prefix flags can't be assigned if flag url-file is not specified")

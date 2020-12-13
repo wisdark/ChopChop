@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"bytes"
 	"gochopchop/data"
 	"io/ioutil"
 	"log"
@@ -15,6 +16,9 @@ func ResponseAnalysis(resp *http.Response, signature data.Check) bool {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Restore the io.ReadCloser to its original state
+	resp.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
+
 	bodyString := string(bodyBytes)
 
 	if signature.StatusCode != nil {
@@ -59,9 +63,8 @@ func ResponseAnalysis(resp *http.Response, signature data.Check) bool {
 			if v, kFound := resp.Header[pHeaders[0]]; kFound {
 				// Key found - check value
 				vFound := false
-				for i, n := range v {
-					if pHeaders[1] == n {
-						_ = i
+				for _, n := range v {
+					if strings.Contains(n, pHeaders[1]) {
 						vFound = true
 					}
 				}
@@ -70,6 +73,27 @@ func ResponseAnalysis(resp *http.Response, signature data.Check) bool {
 				}
 			} else {
 				return false
+			}
+		}
+	}
+
+	if signature.NoHeaders != nil {
+		for i := 0; i < len(signature.NoHeaders); i++ {
+			// Parse NoHeaders
+			pNoHeaders := strings.Split(*signature.NoHeaders[i], ":")
+			v, kFound := resp.Header[pNoHeaders[0]]
+
+			// if the header has not been found, hit!
+			if !kFound {
+				return true
+			} else if kFound && len(pNoHeaders) == 1 { // if the header has not been specified.
+				return false
+			} else {
+				for _, n := range v { // usually, only one iteration
+					if strings.Contains(n, pNoHeaders[1]) {
+						return false
+					}
+				}
 			}
 		}
 	}
